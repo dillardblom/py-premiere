@@ -1,0 +1,108 @@
+[project]
+site_name = "py_premiere"
+site_description = "A Python library for parsing Adobe Premiere Pro project files (.prproj)"
+site_url = "https://Pouf.github.io/py-premiere/"
+repo_url = "https://github.com/Pouf/py-premiere"
+repo_name = "Pouf/py-premiere"
+edit_uri = "edit/main/docs/"
+extra_css = ["stylesheets/extra.css"]
+nav = [
+    { "Home" = "index.md" },
+    { "Quick Start" = "quickstart.md" },
+    { "CLI Tools" = "cli.md" },
+    { "Differences from ExtendScript" = "differences.md" },
+    { "Limitations" = "limitations.md" },
+    { "API Reference" = [
+        { "Overview" = "api/index.md" },
+        { "Application" = "api/application.md" },
+        { "Project" = "api/project.md" },
+        { "Project Item" = "api/project_item.md" },
+        { "Sequence" = "api/sequence.md" },
+        { "Track" = "api/track.md" },
+        { "Track Item" = "api/track_item.md" },
+        { "Transition" = "api/transition.md" },
+        { "Caption" = "api/caption.md" },
+        { "Component" = "api/component.md" },
+        { "Component Param" = "api/component_param.md" },
+        { "Marker" = "api/marker.md" },
+        { "Color" = "api/color.md" },
+        { "Time" = "api/time.md" },
+        { "Enums" = "api/enums.md" },
+        { "XML Layer" = "api/xml.md" },
+    ] },
+]
+
+# Palette toggle for automatic mode
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+primary = "indigo"
+accent = "indigo"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "Switch to light mode"
+
+# Palette toggle for light mode
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "indigo"
+accent = "indigo"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+# Palette toggle for dark mode
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "indigo"
+accent = "indigo"
+toggle.icon = "lucide/moon-star"
+toggle.name = "Switch to system preference"
+
+[project.theme]
+features = [
+    "navigation.sections",
+    "navigation.top",
+    "search.suggest",
+    "search.highlight",
+    "content.tabs.link",
+    "content.code.annotation",
+    "content.code.copy",
+]
+
+[project.theme.icon]
+repo = "fontawesome/brands/github"
+
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums = true
+
+[project.markdown_extensions.pymdownx.superfences]
+
+[project.markdown_extensions.pymdownx.tabbed]
+alternate_style = true
+
+[project.markdown_extensions.pymdownx.magiclink]
+
+[project.markdown_extensions.toc]
+permalink = true
+
+[project.plugins.mkdocstrings.handlers.python]
+paths = ["src"]
+inventories = ["https://docs.python.org/3/objects.inv"]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_section_style = "list"
+docstring_style = "google"
+extensions = ["scripts/griffe_properties.py:PropertiesAsAttributes"]
+group_by_category = true
+heading_level = 2
+inherited_members = true
+members_order = "alphabetical"
+merge_init_into_class = false
+modernize_annotations = true
+parameter_headings = false
+separate_signature = true
+show_category_heading = true
+show_docstring_attributes = false
+show_docstring_parameters = true
+show_docstring_returns = true
+show_if_no_docstring = true

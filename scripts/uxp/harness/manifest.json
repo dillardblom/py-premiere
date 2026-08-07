@@ -1,0 +1,24 @@
+{
+  "id": "com.pouf.pypremiere.harness",
+  "name": "py-premiere harness",
+  "version": "1.0.0",
+  "main": "index.html",
+  "manifestVersion": 5,
+  "host": {
+    "app": "premierepro",
+    "minVersion": "25.6"
+  },
+  "requiredPermissions": {
+    "localFileSystem": "fullAccess"
+  },
+  "entrypoints": [
+    {
+      "id": "harnessPanel",
+      "type": "panel",
+      "minimumSize": { "width": 200, "height": 100 },
+      "preferredDockedSize": { "width": 300, "height": 200 },
+      "preferredFloatingSize": { "width": 300, "height": 200 },
+      "label": { "default": "py-premiere harness" }
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "py-premiere-uxp-harness",
+  "private": true,
+  "description": "UXP devtools CLI used by scripts/run_uxp_in_ppro.ps1. Install with --ignore-scripts (broken upstream postinstall), then run node_modules/@adobe/uxp-devtools-helper/scripts/devtools_setup.js - the runner bootstraps this automatically.",
+  "dependencies": {
+    "@adobe/uxp-devtools-cli": "^1.2.0",
+    "tar": "^7.0.0"
+  }
+}
