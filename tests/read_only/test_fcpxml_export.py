@@ -10,12 +10,16 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from fractions import Fraction
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from helpers import SAMPLES_DIR, each_sample
 
 import py_premiere
 from py_premiere.export import export_fcpxml
+from py_premiere.export.fcpxml import _Resources, _build_spine
+from py_premiere.models.time import TICKS_PER_SECOND
 
 MINIMAL = SAMPLES_DIR / "models" / "minimal"
 
@@ -118,3 +122,76 @@ def test_every_sample_exports_or_says_why(path, tmp_path) -> None:
             lane = int(clip_element.get("lane") or 0)
             declared = "hasAudio" if lane < 0 else "hasVideo"
             assert asset.get(declared) == "1", (asset.get("id"), declared)
+
+
+def _time(seconds: int) -> SimpleNamespace:
+    ticks = seconds * TICKS_PER_SECOND
+    return SimpleNamespace(ticks=ticks, seconds=seconds)
+
+
+def _clip(
+    name: str, start: int, end: int, *, media_path: Path | None = None, in_point: int = 0
+) -> SimpleNamespace:
+    """`start`/`end`/`in_point` are whole seconds, for readable test values."""
+    project_item = (
+        None if media_path is None else SimpleNamespace(media_path=media_path, name=name)
+    )
+    return SimpleNamespace(
+        name=name,
+        start=_time(start),
+        end=_time(end),
+        in_point=_time(in_point),
+        duration=_time(end - start),
+        project_item=project_item,
+    )
+
+
+def _sequence(video_tracks: list, audio_tracks: list, end_seconds: int) -> SimpleNamespace:
+    tracks = [SimpleNamespace(clips=clips) for clips in video_tracks]
+    audio = [SimpleNamespace(clips=clips) for clips in audio_tracks]
+    return SimpleNamespace(video_tracks=tracks, audio_tracks=audio, end=_time(end_seconds))
+
+
+def test_title_or_nested_sequence_reserves_a_spine_slot_for_connected_clips() -> None:
+    # A title card (like a nested sequence, an adjustment layer, ...) has no
+    # media file, so `add_asset` cannot mint it a real `<asset-clip>`. It
+    # must still occupy its span on the spine - real footage in production
+    # archives routinely puts a logo/watermark overlay on V2 starting partway
+    # through a V1 title, and that overlay needs somewhere to attach.
+    intro = _clip("Intro.mp4", 0, 10, media_path=Path("intro.mp4"))
+    title = _clip("Title Card", 10, 20)  # no media_path -> no asset
+    overlay = _clip("Logo.png", 15, 20, media_path=Path("logo.png"))
+    sequence = _sequence([[intro, title], [overlay]], [], end_seconds=20)
+
+    spine = _build_spine(sequence, _Resources(), format_id="r1")
+
+    title_gap = next(g for g in spine.findall("gap") if g.get("name") == "Title Card")
+    assert _rational(title_gap.get("offset")) == Fraction(10)
+    assert _rational(title_gap.get("duration")) == Fraction(10)
+
+    attached = title_gap.find("asset-clip")
+    assert attached is not None, (
+        "connected clip must attach to the title's reserved slot, not raise"
+    )
+    assert attached.get("name") == "Logo.png"
+
+
+def test_connected_clip_can_attach_during_a_deliberate_empty_gap() -> None:
+    # A few empty frames between two clips (e.g. an extended fade to black)
+    # is real, intentional content spacing - not "the sequence is done" - so
+    # a connected clip starting inside it must still find a spine element.
+    first = _clip("A.mp4", 0, 10, media_path=Path("a.mp4"))
+    second = _clip("B.mp4", 15, 25, media_path=Path("b.mp4"))
+    overlay = _clip("Watermark.png", 12, 15, media_path=Path("wm.png"))
+    sequence = _sequence([[first, second], [overlay]], [], end_seconds=25)
+
+    spine = _build_spine(sequence, _Resources(), format_id="r1")
+
+    gap = spine.find("gap")
+    assert gap is not None and gap.get("name") == "Gap"
+    assert _rational(gap.get("offset")) == Fraction(10)
+    assert _rational(gap.get("duration")) == Fraction(5)
+
+    attached = gap.find("asset-clip")
+    assert attached is not None, "overlay during a deliberate gap must not be dropped"
+    assert attached.get("name") == "Watermark.png"

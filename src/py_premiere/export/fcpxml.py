@@ -216,7 +216,24 @@ def _build_spine(
         if ref:
             element = _clip_element(clip, ref, clip.start.ticks, None)
             spine.append(element)
-            placed.append((clip.start.ticks, clip.end.ticks, element))
+        else:
+            # No linkable asset (a title, a nested sequence, an adjustment
+            # layer, ...): not yet renderable as its own element, but its
+            # timeline slot still has to exist on the spine - otherwise a
+            # connected clip whose start falls under it has nothing to
+            # attach to and `_connect` raises. Named after the clip so the
+            # gap in the written FCPXML is traceable back to what it stands
+            # in for, rather than reading as an actual empty hole.
+            element = ET.SubElement(
+                spine,
+                "gap",
+                {
+                    "name": clip.name or "Unsupported clip",
+                    "offset": _seconds(clip.start.ticks),
+                    "duration": _seconds(clip.end.ticks - clip.start.ticks),
+                },
+            )
+        placed.append((clip.start.ticks, clip.end.ticks, element))
         position = max(position, clip.end.ticks)
 
     # The spine has to span the WHOLE sequence, not just its video: audio
