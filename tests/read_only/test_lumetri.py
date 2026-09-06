@@ -9,7 +9,7 @@ import pytest
 from helpers import SAMPLES_DIR
 
 import py_premiere
-from py_premiere.models import Component
+from py_premiere.models import Component, read_lumetri_basic_correction
 
 MINIMAL = SAMPLES_DIR / "models" / "minimal"
 
@@ -104,3 +104,36 @@ def test_curve_payload_layout(name: str, leading: int) -> None:
     assert points[0] == (0.0, 0.0)
     assert points[1] == (1.0, 1.0)
     assert not any(any(point) for point in points[2:])
+
+
+def test_basic_correction_reads_the_touched_exposure_value() -> None:
+    _, lumetri = _lumetri()
+    correction = read_lumetri_basic_correction(lumetri.track_item)
+
+    assert correction is not None
+    assert correction.exposure == 1.0
+
+
+def test_basic_correction_untouched_sliders_read_adobes_own_defaults() -> None:
+    # Also guards against reading the WRONG section: Creative and HSL
+    # Secondary's "Correction" sub-panel both repeat Temperature/Tint/
+    # Contrast/Saturation later in this same component's parameter list.
+    _, lumetri = _lumetri()
+    correction = read_lumetri_basic_correction(lumetri.track_item)
+
+    assert correction is not None
+    assert correction.temperature == 0.0
+    assert correction.tint == 0.0
+    assert correction.saturation == 100.0
+    assert correction.contrast == 0.0
+    assert correction.highlights == 0.0
+    assert correction.shadows == 0.0
+    assert correction.whites == 0.0
+    assert correction.blacks == 0.0
+
+
+def test_basic_correction_none_for_a_clip_with_no_lumetri_effect() -> None:
+    application = py_premiere.parse(MINIMAL / "06_api.prproj")
+    clip = application.project.sequences[0].video_tracks[0].clips[0]
+
+    assert read_lumetri_basic_correction(clip) is None

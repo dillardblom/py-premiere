@@ -7,6 +7,7 @@ from .caption import Caption, CaptionTrack
 from .color import Color
 from .component import Component, ComponentParam
 from .graphic_text import GraphicText, read_graphic_text
+from .lumetri import LumetriBasicCorrection, read_lumetri_basic_correction
 from .marker import Marker
 from .named_list import NamedList
 from .preferences import Preferences
@@ -27,12 +28,14 @@ __all__ = [
     "Component",
     "ComponentParam",
     "GraphicText",
+    "LumetriBasicCorrection",
     "Marker",
     "NamedList",
     "Preferences",
     "Project",
     "ProjectItem",
     "read_graphic_text",
+    "read_lumetri_basic_correction",
     "Sequence",
     "SequenceSettings",
     "Time",
