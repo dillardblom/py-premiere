@@ -6,6 +6,7 @@ from .application import Application
 from .caption import Caption, CaptionTrack
 from .color import Color
 from .component import Component, ComponentParam
+from .graphic_text import GraphicText, read_graphic_text
 from .marker import Marker
 from .named_list import NamedList
 from .preferences import Preferences
@@ -25,11 +26,13 @@ __all__ = [
     "Color",
     "Component",
     "ComponentParam",
+    "GraphicText",
     "Marker",
     "NamedList",
     "Preferences",
     "Project",
     "ProjectItem",
+    "read_graphic_text",
     "Sequence",
     "SequenceSettings",
     "Time",
