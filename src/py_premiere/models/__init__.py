@@ -10,6 +10,7 @@ from .graphic_text import GraphicText, read_graphic_text
 from .lumetri import LumetriBasicCorrection, read_lumetri_basic_correction
 from .marker import Marker
 from .named_list import NamedList
+from .nested_sequence import resolve_nested_sequence
 from .preferences import Preferences
 from .project import Project
 from .project_item import ProjectItem
@@ -36,6 +37,7 @@ __all__ = [
     "ProjectItem",
     "read_graphic_text",
     "read_lumetri_basic_correction",
+    "resolve_nested_sequence",
     "Sequence",
     "SequenceSettings",
     "Time",

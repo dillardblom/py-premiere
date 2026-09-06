@@ -19,9 +19,30 @@ from helpers import SAMPLES_DIR, each_sample
 import py_premiere
 from py_premiere.export import export_fcpxml
 from py_premiere.export.fcpxml import _Resources, _build_spine
+from py_premiere.models.nested_sequence import resolve_nested_sequence
 from py_premiere.models.time import TICKS_PER_SECOND
 
 MINIMAL = SAMPLES_DIR / "models" / "minimal"
+
+
+def _media_clips_reachable(sequence, _visited_nested=None):
+    """Every media-backed clip in `sequence`'s own tracks, plus one visit
+    per DISTINCT nested sequence it references - however many times the
+    same nested sequence is cut in (an ordinary trailer-editing pattern),
+    matching `_Resources.add_nested_sequence`'s dedup-by-identity."""
+    if _visited_nested is None:
+        _visited_nested = set()
+    clips = []
+    for track in sequence.video_tracks + sequence.audio_tracks:
+        for clip in track.clips:
+            if clip.project_item is not None and clip.project_item.media_path:
+                clips.append(clip)
+                continue
+            nested = resolve_nested_sequence(clip)
+            if nested is not None and nested.sequence_id not in _visited_nested:
+                _visited_nested.add(nested.sequence_id)
+                clips.extend(_media_clips_reachable(nested, _visited_nested))
+    return clips
 
 
 def _rational(value: str) -> Fraction:
@@ -105,13 +126,11 @@ def test_every_sample_exports_or_says_why(path, tmp_path) -> None:
 
         # Every clip backed by a media file has to reach the output; a clip
         # that silently vanishes is the failure this test exists to catch.
-        with_media = [
-            clip
-            for track in sequence.video_tracks + sequence.audio_tracks
-            for clip in track.clips
-            if clip.project_item is not None and clip.project_item.media_path
-        ]
-        assert len(list(root.iter("asset-clip"))) == len(with_media)
+        # A nested sequence is flattened into its own <media> resource
+        # (once per distinct sequence, however many times it is used - see
+        # _Resources.add_nested_sequence), so its own media-backed clips
+        # count too, exactly once each.
+        assert len(list(root.iter("asset-clip"))) == len(_media_clips_reachable(sequence))
 
         # And every one of them has to resolve to an asset that declares the
         # stream it is being used for, or an importer drops it.
@@ -143,6 +162,10 @@ def _clip(
         in_point=_time(in_point),
         duration=_time(end - start),
         project_item=project_item,
+        # No <MasterClip> child, so resolve_nested_sequence's own
+        # `.find("MasterClip")` comes back None - this fake clip is never a
+        # nested-sequence reference.
+        _subclip_element=ET.Element("Clip"),
     )
 
 
@@ -195,3 +218,64 @@ def test_connected_clip_can_attach_during_a_deliberate_empty_gap() -> None:
     attached = gap.find("asset-clip")
     assert attached is not None, "overlay during a deliberate gap must not be dropped"
     assert attached.get("name") == "Watermark.png"
+
+
+def test_nested_sequence_becomes_a_ref_clip_over_its_own_media_resource(tmp_path) -> None:
+    # 66_eg_text's "Seq B" cuts in "Seq A" (video AND audio track items,
+    # the same A/V pairing a regular media clip gets) plus a Graphic
+    # overlay with no media of its own.
+    application = py_premiere.parse(MINIMAL / "66_eg_text.prproj")
+    target = export_fcpxml(application.project, tmp_path / "seq_b.fcpxml", application.project.sequences["Seq B"])
+    root = ET.fromstring(target.read_bytes())
+
+    media = root.find("resources/media")
+    assert media is not None and media.get("name") == "Seq A"
+    nested_spine = media.find("sequence/spine")
+    assert nested_spine is not None
+    # Seq A's own two clips (video + audio) reached the nested resource.
+    assert len(list(nested_spine.iter("asset-clip"))) == 2
+
+    top_spine = root.find("library/event/project/sequence/spine")
+    primary_ref = top_spine.find("ref-clip")
+    assert primary_ref is not None
+    assert primary_ref.get("ref") == media.get("id")
+    assert primary_ref.get("name") == "Seq A"
+    # Seq A's audio track item is a connected clip on the same nested
+    # sequence, hanging off the primary ref-clip exactly like a regular
+    # A/V asset's audio half hangs off its video asset-clip.
+    connected_ref = primary_ref.find("ref-clip")
+    assert connected_ref is not None
+    assert connected_ref.get("ref") == media.get("id")
+    assert connected_ref.get("lane") == "-1"
+
+
+def test_nested_sequence_resource_is_shared_across_references() -> None:
+    # A trailer that cuts the same source sequence in twenty times over
+    # (an ordinary trailer-editing pattern) must get ONE <media> resource,
+    # not twenty copies of the same nested spine.
+    application = py_premiere.parse(MINIMAL / "66_eg_text.prproj")
+    seq_a = application.project.sequences["Seq A"]
+    resources = _Resources()
+
+    first = resources.add_nested_sequence(seq_a)
+    second = resources.add_nested_sequence(seq_a)
+
+    assert first == second
+    assert len(resources.element.findall("media")) == 1
+
+
+def test_nested_sequence_cycle_raises_instead_of_recursing_forever(monkeypatch) -> None:
+    application = py_premiere.parse(MINIMAL / "66_eg_text.prproj")
+    seq_a = application.project.sequences["Seq A"]
+    clip = seq_a.video_tracks[0].clips[0]
+
+    # Force the fixture's own footage clip to look like it nests seq_a
+    # into itself - not a shape Premiere's UI can create, but exactly what
+    # the guard exists to catch if it somehow occurred.
+    monkeypatch.setattr(
+        "py_premiere.export.fcpxml.resolve_nested_sequence",
+        lambda c: seq_a if c is clip else None,
+    )
+
+    with pytest.raises(NotImplementedError, match="nested into itself"):
+        _Resources().add_nested_sequence(seq_a)

@@ -34,6 +34,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..models.nested_sequence import resolve_nested_sequence
 from ..models.time import TICKS_PER_SECOND
 
 if TYPE_CHECKING:
@@ -107,11 +108,66 @@ class _Resources:
     def __init__(self) -> None:
         self.element = ET.Element("resources")
         self._by_path: dict[Path, _Asset] = {}
+        self._by_sequence_id: dict[str, str] = {}
+        self._sequences_building: set[str] = set()
         self._next = 1
 
     def _mint(self) -> str:
         identifier = f"r{self._next}"
         self._next += 1
+        return identifier
+
+    def add_nested_sequence(self, sequence: Sequence) -> str:
+        """A `<media>` resource wrapping `sequence`'s own spine.
+
+        Built once per distinct sequence and cached by `sequence_id`, so a
+        sequence cut into a trailer twenty times over (an ordinary trailer-
+        editing pattern: many short excerpts of the same source sequence)
+        gets one shared resource, not twenty copies of it.
+
+        Raises `NotImplementedError` on a cycle (a sequence nested into
+        itself, directly or through others) rather than recursing forever -
+        Premiere's own UI does not allow creating one, so this is a
+        defensive backstop, not a case expected in practice.
+        """
+        sequence_id = sequence.sequence_id
+        if sequence_id is not None:
+            cached = self._by_sequence_id.get(sequence_id)
+            if cached is not None:
+                return cached
+            if sequence_id in self._sequences_building:
+                raise NotImplementedError(
+                    f"sequence {sequence.name!r} is nested into itself "
+                    "(directly or through another sequence) - cannot flatten a cycle"
+                )
+            self._sequences_building.add(sequence_id)
+        try:
+            nested_format_id = self.add_format(sequence)
+            nested_spine = _build_spine(sequence, self, nested_format_id)
+            identifier = self._mint()
+            media = ET.SubElement(
+                self.element, "media", {"id": identifier, "name": sequence.name}
+            )
+            sequence_element = ET.SubElement(
+                media,
+                "sequence",
+                {
+                    "format": nested_format_id,
+                    "duration": _seconds(sequence.end.ticks),
+                    "tcStart": "0s",
+                    "tcFormat": (
+                        "DF"
+                        if sequence.video_display_format in _DROP_FRAME_DISPLAY_FORMATS
+                        else "NDF"
+                    ),
+                },
+            )
+            sequence_element.append(nested_spine)
+        finally:
+            if sequence_id is not None:
+                self._sequences_building.discard(sequence_id)
+        if sequence_id is not None:
+            self._by_sequence_id[sequence_id] = identifier
         return identifier
 
     def add_format(self, sequence: Sequence) -> str:
@@ -193,6 +249,30 @@ def _clip_element(
     return ET.Element("asset-clip", attributes)
 
 
+def _ref_clip_element(
+    clip: TrackItem, ref: str, offset: int, lane: int | None
+) -> ET.Element:
+    """A `<ref-clip>` referencing a nested sequence's `<media>` resource.
+
+    Same attribute shape as `_clip_element`'s `<asset-clip>`: `start` is
+    where in the REFERENCED sequence's own timeline this instance begins
+    (the outer clip's `in_point`, on the nested sequence's clock, exactly
+    as `in_point` already means "position in the source" for a
+    media-backed clip), `duration` is how much of the parent timeline it
+    occupies.
+    """
+    attributes = {
+        "ref": ref,
+        "name": clip.name,
+        "offset": _seconds(offset),
+        "start": _seconds(clip.in_point.ticks),
+        "duration": _seconds(clip.duration.ticks),
+    }
+    if lane is not None:
+        attributes["lane"] = str(lane)
+    return ET.Element("ref-clip", attributes)
+
+
 def _build_spine(
     sequence: Sequence, resources: _Resources, format_id: str
 ) -> ET.Element:
@@ -212,27 +292,34 @@ def _build_spine(
                 },
             )
             placed.append((position, clip.start.ticks, gap))
-        ref = resources.add_asset(clip, format_id, has_video=True)
-        if ref:
-            element = _clip_element(clip, ref, clip.start.ticks, None)
+        nested = resolve_nested_sequence(clip)
+        if nested is not None:
+            ref = resources.add_nested_sequence(nested)
+            element = _ref_clip_element(clip, ref, clip.start.ticks, None)
             spine.append(element)
         else:
-            # No linkable asset (a title, a nested sequence, an adjustment
-            # layer, ...): not yet renderable as its own element, but its
-            # timeline slot still has to exist on the spine - otherwise a
-            # connected clip whose start falls under it has nothing to
-            # attach to and `_connect` raises. Named after the clip so the
-            # gap in the written FCPXML is traceable back to what it stands
-            # in for, rather than reading as an actual empty hole.
-            element = ET.SubElement(
-                spine,
-                "gap",
-                {
-                    "name": clip.name or "Unsupported clip",
-                    "offset": _seconds(clip.start.ticks),
-                    "duration": _seconds(clip.end.ticks - clip.start.ticks),
-                },
-            )
+            ref = resources.add_asset(clip, format_id, has_video=True)
+            if ref:
+                element = _clip_element(clip, ref, clip.start.ticks, None)
+                spine.append(element)
+            else:
+                # No linkable asset (a title, an adjustment layer, ...):
+                # not yet renderable as its own element, but its timeline
+                # slot still has to exist on the spine - otherwise a
+                # connected clip whose start falls under it has nothing to
+                # attach to and `_connect` raises. Named after the clip so
+                # the gap in the written FCPXML is traceable back to what
+                # it stands in for, rather than reading as an actual empty
+                # hole.
+                element = ET.SubElement(
+                    spine,
+                    "gap",
+                    {
+                        "name": clip.name or "Unsupported clip",
+                        "offset": _seconds(clip.start.ticks),
+                        "duration": _seconds(clip.end.ticks - clip.start.ticks),
+                    },
+                )
         placed.append((clip.start.ticks, clip.end.ticks, element))
         position = max(position, clip.end.ticks)
 
@@ -281,8 +368,18 @@ def _connect(
     has_video: bool,
 ) -> None:
     for clip in clips:
-        ref = resources.add_asset(clip, format_id, has_video)
+        nested = resolve_nested_sequence(clip)
+        if nested is not None:
+            ref = resources.add_nested_sequence(nested)
+            build_element = _ref_clip_element
+        else:
+            ref = resources.add_asset(clip, format_id, has_video)
+            build_element = _clip_element
         if not ref:
+            # No linkable asset and not a nested sequence either (an
+            # adjustment layer, a generator with no name-based convention
+            # flagging it, ...): silently dropped, same as ever - a report/
+            # manifest layer is what surfaces these, not the exporter.
             continue
         host = None
         host_start = 0
@@ -298,7 +395,7 @@ def _connect(
                 "element to attach to - the primary video track must cover "
                 "every connected clip's start"
             )
-        host.append(_clip_element(clip, ref, clip.start.ticks - host_start, lane))
+        host.append(build_element(clip, ref, clip.start.ticks - host_start, lane))
 
 
 def export_fcpxml(
